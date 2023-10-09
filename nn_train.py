@@ -6,11 +6,11 @@ import torch.nn as nn
 import torch.optim as optim
 import torch.utils.data as data
 import os
-
+import matplotlib.pyplot as plt
 import argparse
 import time
 from colorama import init, Fore
-
+from scipy.stats import t
 
 init(autoreset=True)
 parser = argparse.ArgumentParser()
@@ -55,7 +55,6 @@ def independent_data(n_samples, n_omit, seq_len):
 	ys = np.reshape(np.array(ys), (n_samples,1))
 	return torch.tensor(xs).float(), torch.tensor(ys).float()
 
-
 ## create dataset
 n_train = args.T
 n_valid = args.T * 3 // 7
@@ -79,6 +78,7 @@ plt.legend()
 plt.grid(True)
 plt.savefig('density.pdf')
 plt.close()
+
 
 def create_torch_loader(x, y):
 	dataset = torch.utils.data.TensorDataset(x, y)
@@ -110,63 +110,79 @@ if args.gvideo:
 	if not os.path.exists("predictions_images"):
 		os.makedirs("predictions_images")
 
-for epoch in range(args.epochs):
-	for setting in settings:
-		loader, model, optimizer, scheduler = loaders[setting], models[setting], optimizers[setting], schedulers[setting]
-		valid_data, valid_labels = valid[setting]
+errors_optimal = np.zeros((200,2))		
+for i in range(200):
+	for epoch in range(args.epochs):
+		for setting in settings:
+			loader, model, optimizer, scheduler = loaders[setting], models[setting], optimizers[setting], schedulers[setting]
+			valid_data, valid_labels = valid[setting]
 
-		model.train()
-		train_losses = []
+			model.train()
+			train_losses = []
 
-		for batch_idx, (data, target) in enumerate(loader):
-			optimizer.zero_grad()
-			output = model(data)
-			loss = criterion(output, target)
-			loss.backward()
-			optimizer.step()
-			train_losses.append(loss.item())
-		
-		model.eval()
-		with torch.no_grad():
-			valid_output = model(valid_data)
-			test_output = model(x_test)
-			valid_loss = criterion(valid_output, valid_labels)
-			test_loss = criterion(test_output, y_test)
+			for batch_idx, (data, target) in enumerate(loader):
+				optimizer.zero_grad()
+				output = model(data)
+				loss = criterion(output, target)
+				loss.backward()
+				optimizer.step()
+				train_losses.append(loss.item())
+			
+			model.eval()
+			with torch.no_grad():
+				valid_output = model(valid_data)
+				test_output = model(x_test)
+				valid_loss = criterion(valid_output, valid_labels)
+				test_loss = criterion(test_output, y_test)
 
-		offset = 0 + 3 * (setting == 'indep')
-		errors[epoch, 0 + offset], errors[epoch, 1 + offset], errors[epoch, 2 + offset] = np.mean(train_losses), valid_loss.item(), test_loss.item()
+			offset = 0 + 3 * (setting == 'indep')
+			errors[epoch, 0 + offset], errors[epoch, 1 + offset], errors[epoch, 2 + offset] = np.mean(train_losses), valid_loss.item(), test_loss.item()
+			scheduler.step()
+			if (epoch + 1) % 5 == 0:
+				print(f'Epoch {epoch+1} [{setting}]: train = {np.mean(train_losses)}, valid = {valid_loss.item()}, test = {test_loss.item()}')
+				ix = np.argmin(errors[:epoch+1, offset+1])
+				print(f'[{setting}]: optimal valid error = {errors[ix, 1 + offset]}, corresponding test error = {errors[ix, 2 + offset]}')
+				#save the optimal valid error
+
+		if args.gvideo:
+			# plot predictions
+			models['dep'].eval()
+			models['indep'].eval()
+			with torch.no_grad():
+				pred_dep = models['dep'](x_test)
+				pred_indep = models['indep'](x_test)
+			
+			plt.figure(figsize=(14, 7))
+
+			plt.title(f'epoch = {epoch}, valid loss = {test_loss.item()}')
+				
+			# Plot actual series
+			plt.plot(np.arange(args.T), y_test_gt, label="Actual Training")
+			# Plot predicted series
+			plt.plot(np.arange(args.T), pred_dep.numpy()[:, 0], label="Dependent Data Predictions")
+			plt.plot(np.arange(args.T), pred_indep.numpy()[:, 0], label="Independent Data Predictions")
+
+			plt.xlabel("Time")
+			plt.ylabel("Value")
+			plt.legend()
+			plt.grid(True)
+				
+			image_path = os.path.join("predictions_images", f"epoch_{epoch + 1}_predictions.png")
+			plt.savefig(image_path)
+			image_paths.append(image_path)
+			plt.close()
+
 		scheduler.step()
-		if (epoch + 1) % 5 == 0:
-			print(f'Epoch {epoch+1} [{setting}]: train = {np.mean(train_losses)}, valid = {valid_loss.item()}, test = {test_loss.item()}')
-			ix = np.argmin(errors[:epoch+1, offset+1])
-			print(f'[{setting}]: optimal valid error = {errors[ix, 1 + offset]}, corresponding test error = {errors[ix, 2 + offset]}')
 
-	if args.gvideo:
-		# plot predictions
-		models['dep'].eval()
-		models['indep'].eval()
-		with torch.no_grad():
-			pred_dep = models['dep'](x_test)
-			pred_indep = models['indep'](x_test)
-		
-		plt.figure(figsize=(14, 7))
+	idx_error_dep, idx_error_indep = np.argmin(errors[:,1]), np.argmin(errors[:,4])
 
-		plt.title(f'epoch = {epoch}, valid loss = {test_loss.item()}')
-			
-		# Plot actual series
-		plt.plot(np.arange(args.T), y_test_gt, label="Actual Training")
-		# Plot predicted series
-		plt.plot(np.arange(args.T), pred_dep.numpy()[:, 0], label="Dependent Data Predictions")
-		plt.plot(np.arange(args.T), pred_indep.numpy()[:, 0], label="Independent Data Predictions")
+	errors_optimal[i,0], errors_optimal[i,1] = errors[idx_error_dep,1], errors[idx_error_indep,4]
 
-		plt.xlabel("Time")
-		plt.ylabel("Value")
-		plt.legend()
-		plt.grid(True)
-			
-		image_path = os.path.join("predictions_images", f"epoch_{epoch + 1}_predictions.png")
-		plt.savefig(image_path)
-		image_paths.append(image_path)
-		plt.close()
+# t-test
+alpha = 0.05
+error_diff = errors_optimal[:,0] - errors_optimal[:,1]
+std = np.std(error_diff)
+Tstat = error_diff/(std/np.sqrt(args.epochs))
+pval = 2*t.cdf(-np.abs(Tstat), df=args.epochs-1)
+print(pval<0.05)
 
-	scheduler.step()
