@@ -21,8 +21,9 @@ parser.add_argument("--window", help="window size", type=int, default=20)
 parser.add_argument("--record_dir", help="directory to save record", type=str, default="")
 parser.add_argument("--seed", help="number of layers", type=int, default=4869)
 parser.add_argument("--lr", help="learning rate", type=float, default=0.001)
-parser.add_argument("--epochs", help="number of epochs", type=int, default=100)
+parser.add_argument("--epochs", help="number of epochs", type=int, default=200)
 parser.add_argument("--gvideo", help="generate video", type=bool, default=False)
+parser.add_argument("--replicates", help="number of replications", type = int, default=200)
 
 args = parser.parse_args()
 
@@ -110,8 +111,8 @@ if args.gvideo:
 	if not os.path.exists("predictions_images"):
 		os.makedirs("predictions_images")
 
-errors_optimal = np.zeros((200,2))		
-for i in range(200):
+errors_optimal = np.zeros((args.replicates,2))		
+for i in range(args.replicates):
 	for epoch in range(args.epochs):
 		for setting in settings:
 			loader, model, optimizer, scheduler = loaders[setting], models[setting], optimizers[setting], schedulers[setting]
